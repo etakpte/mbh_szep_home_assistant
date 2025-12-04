@@ -1,0 +1,12 @@
+mbh_szep:
+  module: mbh_szep
+  class: MbhSzepBalance
+  selenium_url: "http://localhost:4444/wd/hub"
+  mqtt_broker: "localhost"
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_pass: ""
+  mqtt_topic: "szep/balance"
+  poll_interval: 21600
+  username: 
+  password: 
