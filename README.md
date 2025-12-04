@@ -6,7 +6,7 @@ Home Assistant MQTT topic-bol frissiti a szenzor értékét.
 A poll_interval-ban beállitott időközönkét frissit magátol vagy CALL_MBH_SCRAP event hatására kézzel is lehet frissiteni.
 
 ## Szükséges addon-ok
- - AppDaemon
+ - AppDaemon (https://github.com/hassio-addons/addon-appdaemon)
  - Selenium (https://github.com/davida72/selenium-homeassistant)
  - MQTT server (Pl: Mosquitto broker https://github.com/home-assistant/addons/tree/master/mosquitto)
 
