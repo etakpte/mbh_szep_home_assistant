@@ -8,7 +8,7 @@ A poll_interval-ban beállitott időközönkét frissit magátol vagy CALL_MBH_S
 ## Szükséges addon-ok
  - AppDaemon
  - Selenium (https://github.com/davida72/selenium-homeassistant)
- - MQTT server (Mosquitto broker)
+ - MQTT server (Pl: Mosquitto broker https://github.com/home-assistant/addons/tree/master/mosquitto)
 
 ## Install:
 1. app.yaml-t ki kell tölteni az MBH/MQTT bejelentkezési adatokkal
