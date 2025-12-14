@@ -57,7 +57,7 @@ class MbhSzepBalance(hass.Hass):
 
     def create_driver(self):
         chrome_options = Options()
-#        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--headless")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--window-size=1920,1080")
@@ -66,55 +66,68 @@ class MbhSzepBalance(hass.Hass):
 
     def scrape_and_publish(self):
         driver = None
-        try:
-            driver = self.create_driver()
-            driver.get(self.target_url)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                driver = self.create_driver()
+                driver.get(self.target_url)
+                wait = WebDriverWait(driver, 15)
+    
+                # Secure login sequence
+                username_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#ContentPlaceHolder1_txtAzonositoSzam")))
+                username_field.clear()
+                username_field.send_keys(self.username)
+                
+                driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_txtJelszo").send_keys(self.password)
+                driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_cbTipus").click()
+                wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#ContentPlaceHolder1_btnBejelentkezes"))).click()
+    
+                # Robust tab navigation
+                def safe_tab_click():
+                    tab = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 
+                        "#ctl00_ContentPlaceHolder1_tsReszletek > div > ul > li:nth-child(3) > a > span > span > span")))
+                    tab.click()
+                
+                self.retry_with_stale_handling(safe_tab_click, wait)
+    
+                # Extract and parse balance using your method
+                balance_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, self.css_selector)))
+                balance_raw = balance_element.text.strip()
+                balance_value = self.parse_balance(balance_raw)  # Your existing method
+                
+                if balance_value is not None:
+                    balance_value = int(balance_value)  # Convert to int post-parsing
+    
+                # MQTT publish with validation
+                payload = {
+                    "balance_raw": balance_raw,
+                    "balance": balance_value,
+                    "timestamp": int(time.time())
+                }
+                self.mqtt_client.publish(self.mqtt_topic, json.dumps(payload), retain=True)
+                self.log(f"Published balance to MQTT {self.mqtt_topic}: {payload}")
+                return  # Success
+    
+            except (TimeoutException, StaleElementReferenceException, NoSuchElementException) as e:
+                self.error(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    self.error("All retry attempts exhausted")
+                    return
+                time.sleep(2 ** attempt)  # Backoff
+            finally:
+                if driver:
+                    driver.quit()
 
-            wait = WebDriverWait(driver, 15)
+    def retry_with_stale_handling(self, action, wait, max_retries=3):
+        """Handle stale elements during tab clicks and interactions."""
+        for attempt in range(max_retries):
+            try:
+                action()
+                return True
+            except StaleElementReferenceException:
+                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+        raise StaleElementReferenceException("Tab navigation failed after retries") [web:21][web:24]
 
-            # --- Fill login form ---
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#ContentPlaceHolder1_txtAzonositoSzam")))
-            driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_txtAzonositoSzam").send_keys(self.username)
-            driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_txtJelszo").send_keys(self.password)
-
-            # Select client type 'Munkavállaló'
-            driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_cbTipus").click()
-
-            # Click login
-            driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_btnBejelentkezes").click()
-            
-            time.sleep(1)  # small wait for the tab content to render
-
-            tab_selector = "#ctl00_ContentPlaceHolder1_tsReszletek > div > ul > li:nth-child(3) > a > span > span > span"
-            tab = driver.find_element(By.CSS_SELECTOR, tab_selector)
-            
-            tab.click()
-            time.sleep(1)  # small wait for the tab content to render
-
-
-            # --- Wait for balance table to appear ---
-            balance_element = WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, self.css_selector))
-            )
-            balance_raw = balance_element.text.strip()
-            balance_value = self.parse_balance(balance_raw)
-            if balance_value is not None:
-                balance_value = int(balance_value)  # remove decimal
-
-            # --- Publish via MQTT ---
-            payload = {
-                "balance_raw": balance_raw,
-                "balance": balance_value,
-                "timestamp": int(time.time())
-            }
-            self.mqtt_client.publish(self.mqtt_topic, json.dumps(payload), retain=True)
-            self.log(f"Published balance to MQTT {self.mqtt_topic}: {payload}")
-
-        except Exception as e:
-            self.error(f"Scraping failed: {e}")
-        finally:
-            if driver:
-                driver.quit()
 
     def parse_balance(self, raw):
         if raw is None:
