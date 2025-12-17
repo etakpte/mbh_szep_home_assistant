@@ -66,14 +66,19 @@ class MbhSzepBalance(hass.Hass):
 
     def scrape_and_publish(self):
         driver = None
+        session_id = None
         max_retries = 3
+        
         for attempt in range(max_retries):
             try:
                 driver = self.create_driver()
+                session_id = driver.session_id  # Capture for validation
+                self.log(f"New session started: {session_id}")
+                
                 driver.get(self.target_url)
                 wait = WebDriverWait(driver, 15)
     
-                # Secure login sequence
+                # Login sequence
                 username_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#ContentPlaceHolder1_txtAzonositoSzam")))
                 username_field.clear()
                 username_field.send_keys(self.username)
@@ -82,7 +87,7 @@ class MbhSzepBalance(hass.Hass):
                 driver.find_element(By.CSS_SELECTOR, "#ContentPlaceHolder1_cbTipus").click()
                 wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "#ContentPlaceHolder1_btnBejelentkezes"))).click()
     
-                # Robust tab navigation
+                # Tab navigation with retry
                 def safe_tab_click():
                     tab = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, 
                         "#ctl00_ContentPlaceHolder1_tsReszletek > div > ul > li:nth-child(3) > a > span > span > span")))
@@ -90,43 +95,62 @@ class MbhSzepBalance(hass.Hass):
                 
                 self.retry_with_stale_handling(safe_tab_click, wait)
     
-                # Extract and parse balance using your method
+                # Extract balance
                 balance_element = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, self.css_selector)))
                 balance_raw = balance_element.text.strip()
-                balance_value = self.parse_balance(balance_raw)  # Your existing method
+                balance_value = self.parse_balance(balance_raw)
                 
                 if balance_value is not None:
-                    balance_value = int(balance_value)  # Convert to int post-parsing
+                    balance_value = int(balance_value)
     
-                # MQTT publish with validation
+                # Publish
                 payload = {
                     "balance_raw": balance_raw,
                     "balance": balance_value,
                     "timestamp": int(time.time())
                 }
                 self.mqtt_client.publish(self.mqtt_topic, json.dumps(payload), retain=True)
-                self.log(f"Published balance to MQTT {self.mqtt_topic}: {payload}")
+                self.log(f"✅ Published: {payload}")
                 return  # Success
     
-            except (TimeoutException, StaleElementReferenceException, NoSuchElementException) as e:
+            except Exception as e:
                 self.error(f"Attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
-                    self.error("All retry attempts exhausted")
+                    self.error("All retries exhausted")
                     return
-                time.sleep(2 ** attempt)  # Backoff
+                time.sleep(2 ** attempt)
+                
             finally:
-                if driver:
-                    driver.quit()
-
+                # Safe cleanup - validate session before quit
+                if driver and session_id:
+                    try:
+                        if driver.session_id == session_id:  # Session still valid
+                            driver.quit()
+                            self.log(f"Session {session_id} closed cleanly")
+                    except Exception as cleanup_error:
+                        self.error(f"Cleanup failed (ignored): {cleanup_error}")
+                        # Force kill process if needed
+                        try:
+                            driver.service.process.kill()
+                        except:
+                            pass
+    
+    
+    
     def retry_with_stale_handling(self, action, wait, max_retries=3):
-        """Handle stale elements during tab clicks and interactions."""
+        """Handle stale elements with session validation."""
         for attempt in range(max_retries):
             try:
                 action()
                 return True
-            except StaleElementReferenceException:
-                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-        raise StaleElementReferenceException("Tab navigation failed after retries") [web:21][web:24]
+            except (StaleElementReferenceException, TimeoutException):
+                self.log(f"Stale/timeout on attempt {attempt + 1}, retrying...")
+                time.sleep(1)
+            except Exception as e:
+                if "invalid session" in str(e).lower():
+                    raise Exception("Session expired during interaction")
+        raise Exception("Max retries exceeded")
+
 
 
     def parse_balance(self, raw):
