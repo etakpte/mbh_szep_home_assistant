@@ -10,3 +10,5 @@ mbh_szep:
   poll_interval: 21600
   username: 
   password: 
+  timeout: 30  # Increase from default 10s
+  retries: 3
